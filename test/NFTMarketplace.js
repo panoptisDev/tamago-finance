@@ -2,7 +2,7 @@ const { expect } = require("chai")
 const { ethers, upgrades } = require("hardhat")
 const { MerkleTree } = require('merkletreejs')
 const keccak256 = require("keccak256")
-const { toUsdc } = require("./Helpers")
+const { toUsdc, fromUsdc } = require("./Helpers")
 
 let marketplace
 let erc1155
@@ -144,6 +144,8 @@ describe("NFT Marketplace", () => {
         await erc721.mint(alice.address, 1)
         // Prepare ERC-20 for Bob
         await mockUsdc.connect(bob).faucet()
+        // Set Swap fees to 0%
+        await marketplace.setSwapFee(0)
 
         // make approvals
         await erc721.connect(alice).setApprovalForAll(marketplace.address, true)
@@ -166,8 +168,14 @@ describe("NFT Marketplace", () => {
             proof
         ) ).to.true
 
+        const before = await mockUsdc.balanceOf(bob.address)
+
         // swap 200 USDC with 1 NFT
         await marketplace.connect(bob).swap( 1, mockUsdc.address, toUsdc( 200 ), 0, proof)
+
+        const after = await mockUsdc.balanceOf(bob.address)
+        
+        expect( Number(fromUsdc(before)) - Number(fromUsdc(after))).to.equal(200)
 
         // validate the result
         expect( await erc721.ownerOf(1)).to.equal(bob.address)

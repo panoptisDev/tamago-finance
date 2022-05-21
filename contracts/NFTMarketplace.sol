@@ -14,6 +14,7 @@ import "@openzeppelin/contracts/token/ERC1155/ERC1155Holder.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/cryptography/MerkleProof.sol";
+import "@openzeppelin/contracts/math/SafeMath.sol";
 
 /**
  * @title Multi-chain P2P marketplace
@@ -29,6 +30,7 @@ contract NFTMarketplace is
 {
     using Address for address;
     using SafeERC20 for IERC20;
+    using SafeMath for uint256;
 
     enum Role {
         UNAUTHORIZED,
@@ -61,6 +63,10 @@ contract NFTMarketplace is
     uint256 maxBatchOrders;
     // ACL
     mapping(address => Role) private permissions;
+    // Fees
+    uint256 public swapFee;
+    // Dev address
+    address public devAddress;
 
     event OrderCreated(
         uint256 indexed orderId,
@@ -96,6 +102,10 @@ contract NFTMarketplace is
         if (_devAddress != msg.sender) {
             permissions[msg.sender] = Role.ADMIN;
         }
+
+        devAddress = _devAddress;
+        // set default fees
+        swapFee = 100; // 1%
 
         _registerInterface(IERC721Receiver.onERC721Received.selector);
     }
@@ -292,6 +302,16 @@ contract NFTMarketplace is
         _unpause();
     }
 
+    // update dev address
+    function setDevAddress(address _devAddress) external onlyAdmin {
+        devAddress = _devAddress;
+    }
+
+    // update swap fees
+    function setSwapFee(uint256 _fee) external onlyAdmin {
+        swapFee = _fee;
+    }
+
     // set max. orders can be created and swapped per time
     function setMaxBatchOrders(uint256 _value) external onlyAdmin {
         require(_value != 0, "Invalid value");
@@ -456,6 +476,12 @@ contract NFTMarketplace is
         } else if (_type == TokenType.ERC721) { 
             IERC721(_assetAddress).safeTransferFrom(msg.sender, _to, _tokenIdOrAmount);
         } else {
+            // taking swap fees
+            if (swapFee != 0) {
+                uint256 fee = _tokenIdOrAmount.mul(swapFee).div(10000);
+                IERC20(_assetAddress).safeTransferFrom( msg.sender , devAddress, fee );
+            }
+
             IERC20(_assetAddress).safeTransferFrom( msg.sender , _to, _tokenIdOrAmount );
         }
     }
