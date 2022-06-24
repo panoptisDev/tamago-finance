@@ -13,6 +13,8 @@
 [![Generic badge](https://img.shields.io/badge/discord-join-green.svg)](https://discord.gg/78fax5dPqk)
 [![Twitter Follow](https://img.shields.io/twitter/follow/tamagofinance?label=follow%20%40tamagofinance&style=social)](https://twitter.com/tamagofinance)
 
+All NFT marketplace-related contracts have moved to `marketplace-scb10x` repo
+
 ## Deployment
 
 ### Kovan (v.2)
