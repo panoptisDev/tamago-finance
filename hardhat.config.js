@@ -34,7 +34,7 @@ module.exports = {
   solidity: {
     compilers: [
       {
-        version: "0.6.12",
+        version: "0.8.10",
         settings: {
           optimizer: {
             enabled: true,
@@ -46,58 +46,8 @@ module.exports = {
   },
   networks: {
     hardhat: {
-      allowUnlimitedContractSize: true,
-      // forking: {
-      //   url: process.env.POLYGON_URL,
-      //   blockNumber: 20480699,
-      // },
-      forking: {
-        url: process.env.MAINNET_ARCHIVE_RPC,
-        accounts: [process.env.PRIVATEKEY_DEPLOYER, process.env.PRIVATEKEY_DEV],
-        // blockNumber: 13975629,
-      },
-    },
-    mainnet: {
-      allowUnlimitedContractSize: true,
-      url: process.env.MAINNET_URL,
-      accounts: [process.env.PRIVATEKEY_DEPLOYER, process.env.PRIVATEKEY_DEV],
-    },
-    polygon: {
-      allowUnlimitedContractSize: true,
-      url: process.env.POLYGON_URL,
-      accounts: [process.env.PRIVATEKEY_DEPLOYER, process.env.PRIVATEKEY_DEV],
-    },
-    harmony: {
-      allowUnlimitedContractSize: true,
-      url: "https://rpc.s1.t.hmny.io",
-      accounts: [process.env.PRIVATEKEY_DEPLOYER, process.env.PRIVATEKEY_DEV],
-    },
-    bsc: {
-      allowUnlimitedContractSize: true,
-      url: "https://bsc-dataseed.binance.org/",
-      accounts: [process.env.PRIVATEKEY_DEPLOYER, process.env.PRIVATEKEY_DEV],
-    },
-    bscTestnet: {
-      allowUnlimitedContractSize: true,
-      url: "https://data-seed-prebsc-2-s2.binance.org:8545/",
-      accounts: [process.env.PRIVATEKEY_DEPLOYER, process.env.PRIVATEKEY_DEV],
-    },
-    kovan: {
-      allowUnlimitedContractSize: true,
-      url: "https://speedy-nodes-nyc.moralis.io/2041771c8a1a3004b1608ea7/eth/kovan",
-      accounts: [process.env.PRIVATEKEY_DEPLOYER, process.env.PRIVATEKEY_DEV],
-    },
-    mainnetfork: {
-      url: "http://127.0.0.1:8545",
-      accounts: [process.env.PRIVATEKEY_DEPLOYER, process.env.PRIVATEKEY_DEV],
-      timeout: 500000,
-    },
-    kovan: {
-      allowUnlimitedContractSize: true,
-      url: "https://speedy-nodes-nyc.moralis.io/2041771c8a1a3004b1608ea7/eth/kovan",
-      accounts: [process.env.PRIVATEKEY_DEPLOYER, process.env.PRIVATEKEY_DEV],
-      timeout: 500000,
-    },
+      allowUnlimitedContractSize: true
+    }
   },
   namedAccounts: {
     deployer: {
