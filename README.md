@@ -49,6 +49,19 @@ Contract Name | Contract Address
 --- | --- 
 NFT Luckbox | 0xAF4E836b7a1f20F1519cc82529Db54c62b02E93c
 
+### Avalanche Fuji Testnet
+
+Contract Name | Contract Address 
+--- | --- 
+NFT Luckbox v.2 | 0x0Ee774bF5793b51C9c52decde8C07b783c42Df96
+
+### BNB Testnet
+
+Contract Name | Contract Address 
+--- | --- 
+NFT Luckbox v.2 | 0x0Ee774bF5793b51C9c52decde8C07b783c42Df96
+
+
 ## License
 
 MIT ©
