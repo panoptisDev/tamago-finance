@@ -1,6 +1,6 @@
 //SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.10;
+pragma solidity 0.6.12;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 
@@ -8,15 +8,19 @@ contract MockERC721 is ERC721 {
 
     constructor(string memory name, string memory symbol) public ERC721(name, symbol) {
         // Use CryptoKitties as a base URI for this mock collection
-        // _baseURI("https://api.cryptokitties.co/kitties/");
-    }
-
-    function _baseURI() internal override view returns (string memory) {
-        return "https://api.cryptokitties.co/kitties/";
+        _setBaseURI("https://api.cryptokitties.co/kitties/");
     }
 
     function exists(uint256 tokenId) public view returns (bool) {
         return _exists(tokenId);
+    }
+
+    function setTokenURI(uint256 tokenId, string memory uri) public {
+        _setTokenURI(tokenId, uri);
+    }
+
+    function setBaseURI(string memory baseURI) public {
+        _setBaseURI(baseURI);
     }
 
     function mint(address to, uint256 tokenId) public {
