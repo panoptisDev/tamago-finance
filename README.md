@@ -21,13 +21,13 @@ All NFT marketplace-related contracts have moved to `marketplace-scb10x` repo
 
 Contract Name | Contract Address 
 --- | --- 
-NFT Luckbox | 0x0Ee774bF5793b51C9c52decde8C07b783c42Df96
+NFT Luckbox | 0x3c4151361e9718b45409B803B6a9Ee623DBF59FE
 
 ### BNB Testnet
 
 Contract Name | Contract Address 
 --- | --- 
-NFT Luckbox | 0x0Ee774bF5793b51C9c52decde8C07b783c42Df96
+NFT Luckbox | 0xA657b300009802Be7c88617128545534aCA12dbe
 
 
 ## License
