@@ -103,7 +103,7 @@ contract NFTLuckboxV2 is
         address _vrfCoordinator,
         address _LINKTOKEN_contract,
         bytes32 _keyHash
-    ) public VRFConsumerBaseV2(_vrfCoordinator) {
+    ) VRFConsumerBaseV2(_vrfCoordinator) {
         COORDINATOR = VRFCoordinatorV2Interface(_vrfCoordinator);
         LINKTOKEN = LinkTokenInterface(_LINKTOKEN_contract);
 
@@ -165,7 +165,7 @@ contract NFTLuckboxV2 is
 
 		if (rewards[_rewardId].is1155) {
 			IERC1155(rewards[_rewardId].assetAddress).safeTransferFrom(
-				address(this),
+				rewards[_rewardId].owner,
 				msg.sender,
 				rewards[_rewardId].tokenId,
 				1,
@@ -173,7 +173,7 @@ contract NFTLuckboxV2 is
 			);
 		} else {
 			IERC721(rewards[_rewardId].assetAddress).safeTransferFrom(
-				address(this),
+				rewards[_rewardId].owner,
 				msg.sender,
 				rewards[_rewardId].tokenId
 			);
@@ -260,12 +260,12 @@ contract NFTLuckboxV2 is
 		campaigns[_campaignId].rewards = _rewards;
 	}
 
-    /// @notice add the info of NFT to be reward
+    /// @notice register the asset to be a reward
     /// @param _rewardId ID of the reward
     /// @param _assetAddress NFT contract address
     /// @param _tokenId NFT token ID
     /// @param _is1155 ERC-721 or ERC-1155
-    function addReward(
+    function registerReward(
         uint256 _rewardId,
         address _assetAddress,
         uint256 _tokenId,
@@ -294,76 +294,6 @@ contract NFTLuckboxV2 is
             _tokenId,
             _is1155
         );
-    }
-
-    /// @notice deposit ERC-1155 NFT prior to the claim
-	/// @param _assetAddress the NFT asset address
-	/// @param _tokenId the token ID on the NFT
-	/// @param _amount the amount of NFT to be deposited
-	function depositERC1155(
-		address _assetAddress,
-		uint256 _tokenId,
-		uint256 _amount
-	) external nonReentrant {
-		IERC1155(_assetAddress).safeTransferFrom(
-			msg.sender,
-			address(this),
-			_tokenId,
-			_amount,
-			"0x00"
-		);
-	}
-
-	/// @notice deposit ERC-721 NFT prior to the claim
-	/// @param _assetAddress the NFT asset address
-	/// @param _tokenId the token ID on the NFT
-	function depositERC721(address _assetAddress, uint256 _tokenId)
-		external
-		nonReentrant
-	{
-		IERC721(_assetAddress).safeTransferFrom(
-			msg.sender,
-			address(this),
-			_tokenId
-		);
-	}
-
-    /// @notice withdraw ERC-1155 back to its original owner
-	/// @param _tokenAddress the NFT asset address
-	/// @param _tokenId the token ID on the NFT
-    /// @param _amount amount of token to be withdrawn
-    function withdrawERC1155(
-		address _tokenAddress,
-		uint256 _tokenId,
-		uint256 _amount
-    ) external nonReentrant {
-        require( rewards[ addressToRewardId[_tokenAddress][_tokenId]].owner == msg.sender , "Only reward owner can withdraw" );
-
-        IERC1155(_tokenAddress).safeTransferFrom(
-			address(this),
-			msg.sender,
-			_tokenId,
-			_amount,
-			"0x00"
-		);
-
-    }   
-
-    /// @notice withdraw ERC-721 back to its original owner
-	/// @param _tokenAddress the NFT asset address
-	/// @param _tokenId the token ID on the NFT 
-    function withdrawERC721(
-		address _tokenAddress,
-		uint256 _tokenId
-    ) external nonReentrant {
-        require( rewards[ addressToRewardId[_tokenAddress][_tokenId]].owner == msg.sender , "Only reward owner can withdraw" );
-
-        IERC721(_tokenAddress).safeTransferFrom(
-			address(this),
-			msg.sender,
-			_tokenId
-		);
-
     }
 
     /// @notice withdraw ERC-20 locked in the contract
