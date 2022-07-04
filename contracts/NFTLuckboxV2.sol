@@ -112,7 +112,7 @@ contract NFTLuckboxV2 is
         keyHash = _keyHash;
 
         // uncomment when deploying
-        // createNewSubscription();
+        createNewSubscription();
     }
 
     // USERS
