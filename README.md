@@ -29,6 +29,24 @@ Contract Name | Contract Address
 --- | --- 
 NFT Luckbox | 0xA657b300009802Be7c88617128545534aCA12dbe
 
+### Ethereum Mainnet
+
+Contract Name | Contract Address 
+--- | --- 
+NFT Luckbox | 0x772195938d86fcf500dF18563876d7Cefcf47e4D
+
+### BNB Chain
+
+Contract Name | Contract Address 
+--- | --- 
+NFT Luckbox | 0x036e8DB382333BE877dBA1ec694fe2E5B361b607
+
+### Polygon
+
+Contract Name | Contract Address 
+--- | --- 
+NFT Luckbox | 0x978B2A0De8d1E0507032d5430CeE50E2CCA03D5b
+
 
 ## License
 
