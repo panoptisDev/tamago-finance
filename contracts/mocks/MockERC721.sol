@@ -6,12 +6,12 @@ import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 
 contract MockERC721 is ERC721 {
 
-    constructor(string memory name, string memory symbol) public ERC721(name, symbol) {
+    constructor(string memory name, string memory symbol) ERC721(name, symbol) {
         // Use CryptoKitties as a base URI for this mock collection
         // _baseURI("https://api.cryptokitties.co/kitties/");
     }
 
-    function _baseURI() internal override view returns (string memory) {
+    function _baseURI() internal override pure returns (string memory) {
         return "https://api.cryptokitties.co/kitties/";
     }
 
