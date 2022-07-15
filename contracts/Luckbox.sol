@@ -21,7 +21,7 @@ import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
  * @title NFT Luckbox v.2.1 raffle-campaign-on-the-go
  */
 
-contract NFTLuckboxV2 is
+contract Luckbox is
     VRFConsumerBaseV2,
     ReentrancyGuard,
     Ownable,
@@ -112,7 +112,7 @@ contract NFTLuckboxV2 is
         keyHash = _keyHash;
 
         // uncomment when deploying
-        createNewSubscription();
+        // createNewSubscription();
     }
 
     // USERS

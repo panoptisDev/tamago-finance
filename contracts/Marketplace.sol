@@ -2,7 +2,6 @@
 
 pragma solidity 0.8.10;
 
-
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -13,8 +12,7 @@ import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
-import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol"; 
-import "./interfaces/IGateway.sol";
+import "./Eligibility.sol";
 
 /**
  * @title Multi-Chain Marketplace
@@ -25,7 +23,8 @@ contract Marketplace is
     IERC721Receiver,
     ERC721Holder,
     ERC1155Holder,
-    Pausable
+    Pausable,
+    Eligibility
 {
     using Address for address;
     using SafeERC20 for IERC20;
@@ -44,16 +43,15 @@ contract Marketplace is
     struct Order {
         address assetAddress;
         uint256 tokenId;
-        bool is1155;
+        TokenType tokenType;
         address owner;
-        bytes32 root;
-        bool canceled;
-        bool ended;
+        // string cid; // IPFS hash where the barter list is stored
+        bytes32 root; // Merkle Tree's root
         bool active;
+        bool ended;
     }
 
-    // order that's half-fulfilled at destination chain
-    struct PartialOrder {
+    struct Partial {
         bool active;
         bool ended;
         address buyer;
@@ -64,272 +62,245 @@ contract Marketplace is
 
     // ACL
     mapping(address => Role) private permissions;
-    // Gateway contract
-    IGateway private gateway;
-    // Fees (when claim with ERC-20)
+    
+    // Fees (for ERC-20)
     uint256 public swapFee;
     // Dev address
     address public devAddress;
-    // Order Id => Order
-    mapping(uint256 => Order) public orders;
-    // Partially fulfilled orders (orderId -> struct)
-    mapping(uint256 => PartialOrder) public partialOrders;
-    // Max. orders can be executed on swapBatch()
+    // Order's IPFS CID => Order
+    mapping(string => Order) public orders;
+    // Order's IPFS CID => Partial
+    mapping(string => Partial) public partials;
+    // Max. orders can be executed at a time
     uint256 maxBatchOrders;
 
     event OrderCreated(
-        uint256 indexed orderId,
+        address indexed owner,
+        string cid,
         address assetAddress,
         uint256 tokenId,
-        bool is1155,
-        address owner,
+        TokenType tokenType,
         bytes32 root
     );
-    event OrderCreatedBatch(
-        uint256[] indexed orderIds,
-        address[] assetAddresses,
-        uint256[] tokenIds,
-        bool[] is1155s,
-        address owner,
-        bytes32[] roots
+
+    event OrderCanceled(string cid, address indexed owner);
+    event Swapped(string cid, address indexed fromAddress);
+    event PartialSwapped(string cid, address indexed fromAddress);
+    event Claimed(
+        string cid,
+        address indexed fromAddress,
+        bool isOriginChain
     );
 
-    event OrderCanceled(uint256 indexed orderId, address owner);
-    event OrderCanceledBatch(uint256[] indexed orderId, address owner);
-    event Swapped(uint256 indexed orderId, address fromAddress);
-    event SwappedBatch(uint256[] indexed orderIds, address fromAddress);
-    event PartialSwapped(uint256 indexed orderId, address fromAddress);
-    event PartialSwappedBatch(uint256[] indexed orderIds, address fromAddress);
-    event Claimed(uint256 indexed orderId, address fromAddress, bool isOriginChain);
-    event ClaimedBatch(uint256[] indexed orderIds, address fromAddress, bool isOriginChain);
-
-    constructor(address _devAddress, address _gatewayAddress) {
-        gateway = IGateway(_gatewayAddress);
-        devAddress = _devAddress;
-
+    constructor(address _gatewayAddress) Eligibility(_gatewayAddress) {
         maxBatchOrders = 20;
 
-        permissions[_devAddress] = Role.ADMIN;
+        permissions[msg.sender] = Role.ADMIN;
 
-        if (_devAddress != msg.sender) {
-            permissions[msg.sender] = Role.ADMIN;
-        }
-
-        // set swap fees for ERC-20
+        // set fees for ERC-20
         // swapFee = 100; // 1%
     }
 
-    /// @notice create an order 
-    /// @param _orderId ID for the order
+    /// @notice create an order
+    /// @param _cid IPFS HASH CID for the order
     /// @param _assetAddress NFT contract address being listed
     /// @param _tokenId NFT token ID being listed
-    /// @param _is1155 NFT's being listed ERC1155 flag
+    /// @param _type Token type that want to swap
     /// @param _root in the barter list in merkle tree root
     function create(
-        uint256 _orderId,
+        string memory _cid,
         address _assetAddress,
         uint256 _tokenId,
-        bool _is1155,
+        TokenType _type,
         bytes32 _root
     ) external nonReentrant whenNotPaused {
-        _create(_orderId, _assetAddress, _tokenId, _is1155, _root);
+        _create(_cid, _assetAddress, _tokenId, _type, _root);
 
         emit OrderCreated(
-            _orderId,
+            msg.sender,
+            _cid,
             _assetAddress,
             _tokenId,
-            _is1155,
-            msg.sender,
+            _type,
             _root
         );
     }
 
     /// @notice create multiple orders
-    /// @param _orderIds ID for the order
+    /// @param _cids ID for the order
     /// @param _assetAddresses NFT contract address being listed
     /// @param _tokenIds NFT token ID being listed
-    /// @param _is1155s NFT's being listed ERC1155 flag
+    /// @param _types NFT's being listed ERC1155 flag
     /// @param _roots in the barter list in merkle tree root
     function createBatch(
-        uint256[] calldata _orderIds,
+        string[] calldata _cids,
         address[] calldata _assetAddresses,
         uint256[] calldata _tokenIds,
-        bool[] calldata _is1155s,
+        TokenType[] calldata _types,
         bytes32[] calldata _roots
     ) external nonReentrant whenNotPaused {
-        require(maxBatchOrders >= _orderIds.length, "Exceed batch size");
+        require(maxBatchOrders >= _cids.length, "Exceed batch size");
 
-        for (uint256 i = 0; i < _orderIds.length; i++) {
-            _create(_orderIds[i], _assetAddresses[i], _tokenIds[i], _is1155s[i], _roots[i]);
+        for (uint256 i = 0; i < _cids.length; i++) {
+            _create(
+                _cids[i],
+                _assetAddresses[i],
+                _tokenIds[i],
+                _types[i],
+                _roots[i]
+            );
+
+            emit OrderCreated(
+                msg.sender,
+                _cids[i],
+                _assetAddresses[i],
+                _tokenIds[i],
+                _types[i],
+                _roots[i]
+            );
         }
 
-        emit OrderCreatedBatch(
-            _orderIds,
-            _assetAddresses,
-            _tokenIds,
-            _is1155s,
-            msg.sender,
-            _roots
-        );
     }
 
     /// @notice cancel the order
-    /// @param _orderId ID that want to cancel
-    function cancel(uint256 _orderId) external whenNotPaused nonReentrant {
-        
-        _cancel(_orderId);
+    /// @param _cid ID that want to cancel
+    function cancel(string memory _cid) external whenNotPaused nonReentrant {
+        _cancel(_cid);
 
-        emit OrderCanceled(_orderId, msg.sender);
+        emit OrderCanceled(_cid, msg.sender);
     }
 
     /// @notice cancel multiple orders
-    /// @param _orderIds ID that want to cancel
-    function cancelBatch(uint256[] calldata _orderIds) external whenNotPaused nonReentrant {
-        
-        for (uint256 i = 0; i < _orderIds.length; i++) {
-           _cancel(_orderIds[i]);
+    /// @param _cids ID that want to cancel
+    function cancelBatch(string[] calldata _cids)
+        external
+        whenNotPaused
+        nonReentrant
+    {
+        for (uint256 i = 0; i < _cids.length; i++) {
+            _cancel(_cids[i]);
+            emit OrderCanceled(_cids[i], msg.sender);
         }
 
-        emit OrderCanceledBatch(_orderIds, msg.sender);
     }
 
     /// @notice buy the NFT from the given order ID
-    /// @param _orderId ID for the order
+    /// @param _cid ID for the order
     /// @param _assetAddress NFT or ERC20 contract address want to swap
     /// @param _tokenIdOrAmount NFT's token ID or ERC20 token amount want to swap
     /// @param _type Token type that want to swap
     /// @param _proof the proof generated from off-chain
     function swap(
-        uint256 _orderId,
+        string memory _cid,
         address _assetAddress,
         uint256 _tokenIdOrAmount,
         TokenType _type,
         bytes32[] memory _proof
-    ) external validateId(_orderId) whenNotPaused nonReentrant {
-        _swap(_orderId, _assetAddress, _tokenIdOrAmount, _type, _proof);
+    ) external validateId(_cid) whenNotPaused nonReentrant {
+        _swap(_cid, _assetAddress, _tokenIdOrAmount, _type, _proof);
 
-        emit Swapped(_orderId, msg.sender);
+        emit Swapped(_cid, msg.sender);
     }
 
     /// @notice buy the NFT in batch
-    /// @param _orderIds ID for the order
+    /// @param _cids ID for the order
     /// @param _assetAddresses NFT or ERC20 contract address want to swap
     /// @param _tokenIdOrAmounts NFT's token ID or ERC20 token amount want to swap
     /// @param _types Token type that want to swap
     /// @param _proofs the proof generated from off-chain
     function swapBatch(
-        uint256[] calldata _orderIds,
+        string[] calldata _cids,
         address[] calldata _assetAddresses,
         uint256[] calldata _tokenIdOrAmounts,
         TokenType[] calldata _types,
         bytes32[][] calldata _proofs
-    ) validateIds(_orderIds) external whenNotPaused nonReentrant {
-            
-        for (uint256 i = 0; i < _orderIds.length; i++) {
+    ) external validateIds(_cids) whenNotPaused nonReentrant {
+        for (uint256 i = 0; i < _cids.length; i++) {
             _swap(
-                _orderIds[i],
+                _cids[i],
                 _assetAddresses[i],
                 _tokenIdOrAmounts[i],
                 _types[i],
                 _proofs[i]
             );
+            emit Swapped(_cids[i], msg.sender);
         }
-
-        emit SwappedBatch(_orderIds, msg.sender);
     }
 
-    // cross-chain swaps, deposit the NFT on the destination chain and wait for the validator to approve the claim
+    /// @notice buy the NFT from another chain
+    /// @param _cid ID for the order
+    /// @param _assetAddress NFT or ERC20 contract address want to swap
+    /// @param _tokenIdOrAmount NFT's token ID or ERC20 token amount want to swap
+    /// @param _type Token type that want to swap
+    /// @param _proof the proof generated from off-chain
     function partialSwap(
-        uint256 _orderId,
+        string memory _cid,
         address _assetAddress,
         uint256 _tokenIdOrAmount,
         TokenType _type,
         bytes32[] memory _proof
     ) external whenNotPaused nonReentrant {
-        _partialSwap(_orderId, _assetAddress, _tokenIdOrAmount, _type, _proof);
+        _partialSwap(_cid, _assetAddress, _tokenIdOrAmount, _type, _proof);
 
-        emit PartialSwapped(_orderId, msg.sender);
+        emit PartialSwapped(_cid, msg.sender);
     }
 
-    // cross-chain swaps in batch
-     function partialSwapBatch(
-        uint256[] calldata _orderIds,
+    /// @notice buy the NFT from another chain in batch
+    /// @param _cids ID for the order
+    /// @param _assetAddresses NFT or ERC20 contract address want to swap
+    /// @param _tokenIdOrAmounts NFT's token ID or ERC20 token amount want to swap
+    /// @param _types Token type that want to swap
+    /// @param _proofs the proof generated from off-chain
+    function partialSwapBatch(
+        string[] calldata _cids,
         address[] calldata _assetAddresses,
         uint256[] calldata _tokenIdOrAmounts,
         TokenType[] calldata _types,
         bytes32[][] calldata _proofs
     ) external whenNotPaused nonReentrant {
-
-        for (uint256 i = 0; i < _orderIds.length; i++) {
-            _partialSwap(_orderIds[i], _assetAddresses[i], _tokenIdOrAmounts[i], _types[i], _proofs[i]);
+        for (uint256 i = 0; i < _cids.length; i++) {
+            _partialSwap(
+                _cids[i],
+                _assetAddresses[i],
+                _tokenIdOrAmounts[i],
+                _types[i],
+                _proofs[i]
+            );
+            emit PartialSwapped(_cids[i], msg.sender);
         }
 
-        emit PartialSwappedBatch(_orderIds, msg.sender);
     }
 
-    // check whether can do intra-chain swaps
-    function eligibleToSwap(
-        uint256 _orderId,
-        address _assetAddress,
-        uint256 _tokenIdOrAmount,
-        bytes32[] memory _proof
-    ) external view validateId(_orderId) returns (bool) {
-        return
-            _eligibleToSwap(_orderId, _assetAddress, _tokenIdOrAmount, _proof);
-    }
-
-    // check if the caller can claim the NFT (that approved by the validator )
-    function eligibleToClaim(
-        uint256 _orderId,
-        address _claimer,
-        bool _isOriginChain,
-        bytes32[] memory _proof
-    ) external view returns (bool) {
-        return _eligibleToClaim(_orderId, _claimer, _isOriginChain, _proof);
-    }
-
-    // check if the caller can deposit the nft
-    function eligibleToPartialSwap(
-        uint256 _orderId,
-        address _assetAddress,
-        uint256 _tokenIdOrAmount,
-        bytes32[] memory _proof
-    ) external view returns (bool) {
-        return
-            _eligibleToPartialSwap(
-                _orderId,
-                _assetAddress,
-                _tokenIdOrAmount,
-                _proof
-            );
-    }
-
-    // claim the NFT (that approved by the validator )
+    /// @notice claim the NFT from cross-chain transactions
+    /// @param _cid ID for the order
+    /// @param _isOriginChain is the origin chain?
+    /// @param _proof the proof generated from off-chain
     function claim(
-        uint256 _orderId,
+        string memory _cid,
         bool _isOriginChain,
         bytes32[] memory _proof
     ) external whenNotPaused nonReentrant {
-        
-        _claim(_orderId, _isOriginChain, _proof);
+        _claim(_cid, _isOriginChain, _proof);
 
-        emit Claimed( _orderId, msg.sender, _isOriginChain );
+        emit Claimed(_cid, msg.sender, _isOriginChain);
     }
 
+    /// @notice claim the NFT from cross-chain transactions in batch
+    /// @param _cids ID for the order
+    /// @param _isOriginChain is the origin chain?
+    /// @param _proofs the proof generated from off-chain
     function claimBatch(
-        uint256[] calldata _orderIds,
+        string[] calldata _cids,
         bool _isOriginChain,
         bytes32[][] calldata _proofs
     ) external whenNotPaused nonReentrant {
-        
-        for (uint256 i = 0; i < _orderIds.length; i++) {
-            _claim(_orderIds[i], _isOriginChain, _proofs[i]);
+        for (uint256 i = 0; i < _cids.length; i++) {
+            _claim(_cids[i], _isOriginChain, _proofs[i]);
+            emit Claimed(_cids[i], msg.sender, _isOriginChain);
         }
-        
-        emit ClaimedBatch(_orderIds, msg.sender, _isOriginChain);
     }
 
-    // ADMIN FUNCTIONS
+    // ADMIN
 
     // give a specific permission to the given address
     function grant(address _address, Role _role) external onlyAdmin {
@@ -353,33 +324,9 @@ contract Marketplace is
         _unpause();
     }
 
-    // update dev address
-    function setDevAddress(address _devAddress) external onlyAdmin {
-        devAddress = _devAddress;
-    }
-
     // update swap fees
     function setSwapFee(uint256 _fee) external onlyAdmin {
         swapFee = _fee;
-    }
-
-    // only admin can cancel the partial swap 
-    function cancelPartialSwap(uint256 _orderId, address _to)
-        external
-        onlyAdmin
-        nonReentrant
-    {
-        require(partialOrders[_orderId].active == true, "Invalid order");
-
-        _give(
-            partialOrders[_orderId].buyer,
-            partialOrders[_orderId].assetAddress,
-            partialOrders[_orderId].tokenIdOrAmount,
-            partialOrders[_orderId].tokenType,
-            _to
-        );
-
-        partialOrders[_orderId].active = false;
     }
 
     // set max. orders can be created and swapped per time
@@ -388,8 +335,26 @@ contract Marketplace is
         maxBatchOrders = _value;
     }
 
+    // only admin can cancel the partial swap
+    function cancelPartialSwap(string memory _cid, address _to)
+        external
+        onlyAdmin
+        nonReentrant
+    {
+        require(partials[_cid].active == true, "Invalid order");
 
-    // INTERNAL FUCNTIONS
+        _give(
+            partials[_cid].buyer,
+            partials[_cid].assetAddress,
+            partials[_cid].tokenIdOrAmount,
+            partials[_cid].tokenType,
+            _to
+        );
+
+        partials[_cid].active = false;
+    }
+
+    // INTERNAL FUNCTIONS
 
     modifier onlyAdmin() {
         require(
@@ -399,12 +364,8 @@ contract Marketplace is
         _;
     }
 
-    modifier validateId(uint256 _orderId) {
+    modifier validateId(string memory _orderId) {
         require(orders[_orderId].active == true, "Given ID is invalid");
-        require(
-            orders[_orderId].canceled == false,
-            "The order has been cancelled"
-        );
         require(
             orders[_orderId].ended == false,
             "The order has been fulfilled"
@@ -412,88 +373,50 @@ contract Marketplace is
         _;
     }
 
-    modifier validateIds(uint256[] memory _orderIds) {
+    modifier validateIds(string[] memory _orderIds) {
         require(maxBatchOrders >= _orderIds.length, "Exceed batch size");
         for (uint256 i = 0; i < _orderIds.length; i++) {
-            require(orders[i].active == true, "Given ID is invalid");
-            require(
-                orders[i].canceled == false,
-                "The order has been cancelled"
-            );
-            require(orders[i].ended == false, "The order has been fulfilled");
+            require(orders[_orderIds[i]].active == true, "Given ID is invalid");
+            require(orders[_orderIds[i]].ended == false, "The order has been fulfilled");
         }
         _;
     }
 
     function _create(
-        uint256 _orderId,
-        address _assetAddress,
-        uint256 _tokenId,
-        bool _is1155,
-        bytes32 _root
-    ) internal {
-        require(orders[_orderId].active == false, "Given ID is occupied");
-
-        orders[_orderId].active = true;
-        orders[_orderId].assetAddress = _assetAddress;
-        orders[_orderId].tokenId = _tokenId;
-        orders[_orderId].is1155 = _is1155;
-        orders[_orderId].root = _root;
-        orders[_orderId].owner = msg.sender;
-
-        TokenType currentType = TokenType.ERC721;
-
-        if (_is1155) {
-            currentType = TokenType.ERC1155;
-        }
-        
-    }
-
-    function _swap(
-        uint256 _orderId,
+        string memory _cid,
         address _assetAddress,
         uint256 _tokenId,
         TokenType _type,
-        bytes32[] memory _proof
+        bytes32 _root
     ) internal {
-        require(
-            _eligibleToSwap(_orderId, _assetAddress, _tokenId, _proof) == true,
-            "The caller is not eligible to claim the NFT"
-        );
+        require(orders[_cid].active == false, "Given ID is occupied");
 
-        // taking NFT
-        _take(_assetAddress, _tokenId, _type, orders[_orderId].owner);
+        orders[_cid].active = true;
+        orders[_cid].assetAddress = _assetAddress;
+        orders[_cid].tokenId = _tokenId;
+        orders[_cid].tokenType = _type;
+        orders[_cid].root = _root;
+        orders[_cid].owner = msg.sender;
+    }
 
-        // giving NFT
-        TokenType nftType = TokenType.ERC721;
-        if (orders[_orderId].is1155 == true) {
-            nftType = TokenType.ERC1155;
-        }
-        _give(
-            orders[_orderId].owner,
-            orders[_orderId].assetAddress,
-            orders[_orderId].tokenId,
-            nftType,
-            msg.sender
-        );
+    function _cancel(string memory _orderId) internal {
+        require(orders[_orderId].active == true, "Given ID is invalid");
+        require(orders[_orderId].owner == msg.sender, "You are not the owner");
 
         orders[_orderId].ended = true;
     }
 
     function _partialSwap(
-        uint256 _orderId,
+        string memory _cid,
         address _assetAddress,
         uint256 _tokenIdOrAmount,
         TokenType _type,
         bytes32[] memory _proof
     ) internal {
-        require(
-            partialOrders[_orderId].active == false,
-            "The order is already active"
-        );
+        require(partials[_cid].active == false, "The order is already active");
         require(
             _eligibleToPartialSwap(
-                _orderId,
+                _cid,
                 _assetAddress,
                 _tokenIdOrAmount,
                 _proof
@@ -504,15 +427,42 @@ contract Marketplace is
         // deposit NFT or tokens until the NFT locked in the origin chain is being transfered to the buyer
         _take(_assetAddress, _tokenIdOrAmount, _type, address(this));
 
-        partialOrders[_orderId].active = true;
-        partialOrders[_orderId].buyer = msg.sender;
-        partialOrders[_orderId].assetAddress = _assetAddress;
-        partialOrders[_orderId].tokenIdOrAmount = _tokenIdOrAmount;
-        partialOrders[_orderId].tokenType = _type;
+        partials[_cid].active = true;
+        partials[_cid].buyer = msg.sender;
+        partials[_cid].assetAddress = _assetAddress;
+        partials[_cid].tokenIdOrAmount = _tokenIdOrAmount;
+        partials[_cid].tokenType = _type;
     }
 
+    function _swap(
+        string memory _orderId,
+        address _assetAddress,
+        uint256 _tokenId,
+        TokenType _type,
+        bytes32[] memory _proof
+    ) internal {
+        require(
+            _eligibleToSwap(_orderId, _assetAddress, _tokenId,  orders[_orderId].root, _proof) == true,
+            "The caller is not eligible to claim the NFT"
+        );
+
+        // taking NFT
+        _take(_assetAddress, _tokenId, _type, orders[_orderId].owner);
+
+        // giving NFT
+        _give(
+            orders[_orderId].owner,
+            orders[_orderId].assetAddress,
+            orders[_orderId].tokenId,
+            orders[_orderId].tokenType,
+            msg.sender
+        );
+
+        orders[_orderId].ended = true;
+    }
+    
     function _claim(
-        uint256 _orderId,
+        string memory _orderId,
         bool _isOriginChain,
         bytes32[] memory _proof
     ) internal {
@@ -524,15 +474,11 @@ contract Marketplace is
 
         // giving NFT
         if (_isOriginChain == true) {
-            TokenType nftType = TokenType.ERC721;
-            if (orders[_orderId].is1155 == true) {
-                nftType = TokenType.ERC1155;
-            }
             _give(
                 orders[_orderId].owner,
                 orders[_orderId].assetAddress,
                 orders[_orderId].tokenId,
-                nftType,
+                orders[_orderId].tokenType,
                 msg.sender
             );
 
@@ -540,75 +486,14 @@ contract Marketplace is
         } else {
             _give(
                 address(this),
-                partialOrders[_orderId].assetAddress,
-                partialOrders[_orderId].tokenIdOrAmount,
-                partialOrders[_orderId].tokenType,
+                partials[_orderId].assetAddress,
+                partials[_orderId].tokenIdOrAmount,
+                partials[_orderId].tokenType,
                 msg.sender
             );
 
-            partialOrders[_orderId].ended = true;
+            partials[_orderId].ended = true;
         }
-
-    }
-
-    function _eligibleToSwap(
-        uint256 _orderId,
-        address _assetAddress,
-        uint256 _tokenIdOrAmount,
-        bytes32[] memory _proof
-    ) internal view returns (bool) { 
-        bytes32 leaf = keccak256(
-            abi.encodePacked(_assetAddress, _tokenIdOrAmount)
-        );
-        return MerkleProof.verify(_proof, orders[_orderId].root, leaf);
-    }
-
-    function _eligibleToPartialSwap(
-        uint256 _orderId,
-        address _assetAddress,
-        uint256 _tokenIdOrAmount,
-        bytes32[] memory _proof
-    ) internal view returns (bool) {
-        bytes32 leaf = keccak256(
-            abi.encodePacked(
-                _orderId,
-                gateway.chainId(),
-                _assetAddress,
-                _tokenIdOrAmount
-            )
-        );
-        return MerkleProof.verify(_proof, gateway.relayRoot(), leaf);
-    }
-
-    function _eligibleToClaim(
-        uint256 _orderId,
-        address _claimer,
-        bool _isOriginChain,
-        bytes32[] memory _proof
-    ) internal view returns (bool) {
-        bytes32 leaf = keccak256(
-            abi.encodePacked(
-                _orderId,
-                gateway.chainId(),
-                _claimer,
-                _isOriginChain
-            )
-        );
-        return MerkleProof.verify(_proof, gateway.claimRoot(), leaf);
-    }
-
-    function _cancel(uint256 _orderId) internal {
-        require(orders[_orderId].active == true, "Given ID is invalid");
-        require(orders[_orderId].owner == msg.sender, "You are not the owner");
-
-        TokenType currentType = TokenType.ERC721;
-
-        if (orders[_orderId].is1155 == true) {
-            currentType = TokenType.ERC1155;
-        }
-
-        orders[_orderId].canceled = true;
-        orders[_orderId].ended = true;
     }
 
     function _take(
@@ -672,7 +557,6 @@ contract Marketplace is
                 _tokenIdOrAmount
             );
         } else {
-
             if (_fromAddress == address(this)) {
                 IERC20(_assetAddress).safeTransfer(
                     msg.sender,
@@ -685,8 +569,6 @@ contract Marketplace is
                     _tokenIdOrAmount
                 );
             }
- 
-            
         }
     }
 }

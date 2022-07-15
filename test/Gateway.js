@@ -12,7 +12,7 @@ describe("Gateway contract", () => {
 
         const Gateway = await ethers.getContractFactory("Gateway")
 
-        gateway = await Gateway.deploy(admin.address, 1)
+        gateway = await Gateway.deploy( 1)
 
         await gateway.connect(admin).grant(relayer.address, 2)
         await gateway.connect(admin).grant(validator.address, 3)

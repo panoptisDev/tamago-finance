@@ -42,12 +42,8 @@ contract Gateway is ReentrancyGuard, IGateway {
     mapping(uint256 => ClaimMessage) public claimMessages;
     uint256 public claimMessageCount;
 
-    constructor(address _devAddress, uint256 _chainId) {
-        permissions[_devAddress] = Role.ADMIN;
-
-        if (_devAddress != msg.sender) {
-            permissions[msg.sender] = Role.ADMIN;
-        }
+    constructor( uint256 _chainId) {
+        permissions[msg.sender] = Role.ADMIN;
 
         chainId = _chainId;
     }
