@@ -26,7 +26,7 @@ describe("NFTLuckbox V2", () => {
 
         const MockERC1155 = await ethers.getContractFactory("MockERC1155")
         const MockERC721 = await ethers.getContractFactory("MockERC721");
-        const NFTLuckboxV2 = await ethers.getContractFactory("NFTLuckboxV2");
+        const NFTLuckboxV2 = await ethers.getContractFactory("Luckbox");
 
         erc721 = await MockERC721.deploy("Mock NFT", "MOCK")
         erc1155 = await MockERC1155.deploy(
