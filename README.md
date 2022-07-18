@@ -13,9 +13,34 @@
 [![Generic badge](https://img.shields.io/badge/discord-join-green.svg)](https://discord.gg/78fax5dPqk)
 [![Twitter Follow](https://img.shields.io/twitter/follow/tamagofinance?label=follow%20%40tamagofinance&style=social)](https://twitter.com/tamagofinance)
 
-All NFT marketplace-related contracts have moved to `marketplace-scb10x` repo
-
 ## Deployment
+
+### Ethereum Mainnet
+
+Contract Name | Contract Address 
+--- | --- 
+NFT Luckbox | 0x772195938d86fcf500dF18563876d7Cefcf47e4D
+Marketplace | 0x260fC7251fAe677B6254773d347121862336fb9f
+
+### BNB Chain
+
+Contract Name | Contract Address 
+--- | --- 
+NFT Luckbox | 0x036e8DB382333BE877dBA1ec694fe2E5B361b607
+Marketplace | 0x5Cd0BC81Fc176ea4f1e571D5279AFDee35dda618
+
+### Polygon
+
+Contract Name | Contract Address 
+--- | --- 
+NFT Luckbox | 0x978B2A0De8d1E0507032d5430CeE50E2CCA03D5b
+Marketplace | 0xcf30E553633737258A0392D07A5062Ba2C79Ca9F
+
+### Avalanche (Chain id : 43114) 
+
+Contract Name | Contract Address 
+--- | --- 
+Marketplace | 0x42209A0A2a3D80Ad48B7D25fC6a61ad355901484
 
 ### Avalanche Fuji Testnet
 
@@ -28,24 +53,6 @@ NFT Luckbox | 0x3c4151361e9718b45409B803B6a9Ee623DBF59FE
 Contract Name | Contract Address 
 --- | --- 
 NFT Luckbox | 0xA657b300009802Be7c88617128545534aCA12dbe
-
-### Ethereum Mainnet
-
-Contract Name | Contract Address 
---- | --- 
-NFT Luckbox | 0x772195938d86fcf500dF18563876d7Cefcf47e4D
-
-### BNB Chain
-
-Contract Name | Contract Address 
---- | --- 
-NFT Luckbox | 0x036e8DB382333BE877dBA1ec694fe2E5B361b607
-
-### Polygon
-
-Contract Name | Contract Address 
---- | --- 
-NFT Luckbox | 0x978B2A0De8d1E0507032d5430CeE50E2CCA03D5b
 
 
 ## License
