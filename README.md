@@ -54,6 +54,34 @@ Contract Name | Contract Address
 --- | --- 
 NFT Luckbox | 0xA657b300009802Be7c88617128545534aCA12dbe
 
+## Marketplace Payload
+
+A payload is basically the core element of the Tamago's P2P trading protocol defining the way to store asset information to be traded, the Merkle tree root's hash will be created upon its data and attach to the contract. 
+
+```
+{
+    "category": Name of the category,
+    "timestamp": Timestamp,
+    "chainId": Chain ID of the base asset,
+    "ownerAddress": Wallet address of the owner,
+    "baseAssetAddress": Contract address of the NFT or ERC-20,
+    "baseAssetTokenIdOrAmount": NFT's Token ID or ERC-20 amount,
+    "baseAssetTokenType": Asset Type - 0 - ERC-20, 1 - ERC-721, 2- ERC-1155,
+    "barterList": [
+        {
+            "assetAddress": Contract address of the NFT or ERC-20 to be traded,
+            "assetTokenIdOrAmount": NFT's Token ID or ERC-20 amount to be traded,
+            "tokenType": Asset Type to be traded,
+            "chainId": Chain ID of the asset to be traded
+        }
+    ]
+}
+```
+
+One of the example payload:
+https://bafkreiayczhsojnlcm7ra6iok6wpwlxznwtfsfzhbrxftog4fxdgq4rkvq.ipfs.nftstorage.link/
+
+After the entry is uploaded successfully on IPFS, the merkle tree will be contructed using the Keccak hash from 4 pieces of information `CID`, `chainId`, `assetAddress`, `assetTokenIdOrAmount`.
 
 ## License
 
