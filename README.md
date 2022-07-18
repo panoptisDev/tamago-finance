@@ -1,6 +1,6 @@
 # Tamago Finance
 
-> A value-backed NFT issuance protocol on EVM compatible chains
+> P2P Trading Protocol + Raffle-as-a-service
 
 [![Netlify Status](https://api.netlify.com/api/v1/badges/e84d4c25-ebdb-4b18-9751-5ed453015029/deploy-status)](https://app.netlify.com/sites/helpful-meerkat-01f0e9/deploys)
 
