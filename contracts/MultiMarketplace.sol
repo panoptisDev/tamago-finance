@@ -12,53 +12,13 @@ import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
-import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
-
-
-contract Eligibility 
-{
-    using Address for address;
-
-    // Chain ID
-    uint256 public chainId;
-    
-    constructor(uint256 _chainId) {
-        chainId = _chainId;
-    }
-
-    // check whether can do intra-chain swaps
-    function eligibleToSwap(
-        string memory _cid,
-        address _assetAddress,
-        uint256 _tokenIdOrAmount,
-        bytes32 _root,
-        bytes32[] memory _proof
-    ) external view returns (bool) {
-        return _eligibleToSwap(_cid, _assetAddress, _tokenIdOrAmount,  _root, _proof);
-    }
-
-    // INTERNAL
-
-    function _eligibleToSwap(
-        string memory _cid,
-        address _assetAddress,
-        uint256 _tokenIdOrAmount,
-        bytes32 _root,
-        bytes32[] memory _proof
-    ) internal view returns (bool) {
-        bytes32 leaf = keccak256(
-            abi.encodePacked( _cid, chainId, _assetAddress, _tokenIdOrAmount)
-        );
-        return MerkleProof.verify(_proof, _root, leaf);
-    }
-
-}
+import "./Eligibility.sol";
 
 /**
- * @title Single-Chain Marketplace
+ * @title Multi-Chain Marketplace
  */
 
-contract Marketplace is
+contract MultiMarketplace is
     ReentrancyGuard,
     IERC721Receiver,
     ERC721Holder,
@@ -85,9 +45,19 @@ contract Marketplace is
         uint256 tokenId;
         TokenType tokenType;
         address owner;
+        // string cid; // IPFS hash where the barter list is stored
         bytes32 root; // Merkle Tree's root
         bool active;
         bool ended;
+    }
+
+    struct Partial {
+        bool active;
+        bool ended;
+        address buyer;
+        address assetAddress;
+        uint256 tokenIdOrAmount;
+        TokenType tokenType;
     }
 
     // ACL
@@ -99,6 +69,8 @@ contract Marketplace is
     address public devAddress;
     // Order's IPFS CID => Order
     mapping(string => Order) public orders;
+    // Order's IPFS CID => Partial
+    mapping(string => Partial) public partials;
     // Max. orders can be executed at a time
     uint256 maxBatchOrders;
 
@@ -113,8 +85,14 @@ contract Marketplace is
 
     event OrderCanceled(string cid, address indexed owner);
     event Swapped(string cid, address indexed fromAddress);
-   
-    constructor(uint256 _chainId) Eligibility(_chainId) {
+    event PartialSwapped(string cid, address indexed fromAddress);
+    event Claimed(
+        string cid,
+        address indexed fromAddress,
+        bool isOriginChain
+    );
+
+    constructor(address _gatewayAddress) Eligibility(_gatewayAddress) {
         maxBatchOrders = 20;
 
         permissions[msg.sender] = Role.ADMIN;
@@ -251,6 +229,78 @@ contract Marketplace is
         }
     }
 
+    /// @notice buy the NFT from another chain
+    /// @param _cid ID for the order
+    /// @param _assetAddress NFT or ERC20 contract address want to swap
+    /// @param _tokenIdOrAmount NFT's token ID or ERC20 token amount want to swap
+    /// @param _type Token type that want to swap
+    /// @param _proof the proof generated from off-chain
+    function partialSwap(
+        string memory _cid,
+        address _assetAddress,
+        uint256 _tokenIdOrAmount,
+        TokenType _type,
+        bytes32[] memory _proof
+    ) external whenNotPaused nonReentrant {
+        _partialSwap(_cid, _assetAddress, _tokenIdOrAmount, _type, _proof);
+
+        emit PartialSwapped(_cid, msg.sender);
+    }
+
+    /// @notice buy the NFT from another chain in batch
+    /// @param _cids ID for the order
+    /// @param _assetAddresses NFT or ERC20 contract address want to swap
+    /// @param _tokenIdOrAmounts NFT's token ID or ERC20 token amount want to swap
+    /// @param _types Token type that want to swap
+    /// @param _proofs the proof generated from off-chain
+    function partialSwapBatch(
+        string[] calldata _cids,
+        address[] calldata _assetAddresses,
+        uint256[] calldata _tokenIdOrAmounts,
+        TokenType[] calldata _types,
+        bytes32[][] calldata _proofs
+    ) external whenNotPaused nonReentrant {
+        for (uint256 i = 0; i < _cids.length; i++) {
+            _partialSwap(
+                _cids[i],
+                _assetAddresses[i],
+                _tokenIdOrAmounts[i],
+                _types[i],
+                _proofs[i]
+            );
+            emit PartialSwapped(_cids[i], msg.sender);
+        }
+
+    }
+
+    /// @notice claim the NFT from cross-chain transactions
+    /// @param _cid ID for the order
+    /// @param _isOriginChain is the origin chain?
+    /// @param _proof the proof generated from off-chain
+    function claim(
+        string memory _cid,
+        bool _isOriginChain,
+        bytes32[] memory _proof
+    ) external whenNotPaused nonReentrant {
+        _claim(_cid, _isOriginChain, _proof);
+
+        emit Claimed(_cid, msg.sender, _isOriginChain);
+    }
+
+    /// @notice claim the NFT from cross-chain transactions in batch
+    /// @param _cids ID for the order
+    /// @param _isOriginChain is the origin chain?
+    /// @param _proofs the proof generated from off-chain
+    function claimBatch(
+        string[] calldata _cids,
+        bool _isOriginChain,
+        bytes32[][] calldata _proofs
+    ) external whenNotPaused nonReentrant {
+        for (uint256 i = 0; i < _cids.length; i++) {
+            _claim(_cids[i], _isOriginChain, _proofs[i]);
+            emit Claimed(_cids[i], msg.sender, _isOriginChain);
+        }
+    }
 
     // ADMIN
 
@@ -281,6 +331,11 @@ contract Marketplace is
         swapFee = _fee;
     }
 
+    // update gateway
+    function setGateway(address _gatewayAddress) external onlyAdmin {
+        _setGateway(_gatewayAddress);
+    }
+
     // update dev address
     function setDevAddress(address _devAddress) external onlyAdmin {
         devAddress = _devAddress;
@@ -290,6 +345,25 @@ contract Marketplace is
     function setMaxBatchOrders(uint256 _value) external onlyAdmin {
         require(_value != 0, "Invalid value");
         maxBatchOrders = _value;
+    }
+
+    // only admin can cancel the partial swap
+    function cancelPartialSwap(string memory _cid, address _to)
+        external
+        onlyAdmin
+        nonReentrant
+    {
+        require(partials[_cid].active == true, "Invalid order");
+
+        _give(
+            partials[_cid].buyer,
+            partials[_cid].assetAddress,
+            partials[_cid].tokenIdOrAmount,
+            partials[_cid].tokenType,
+            _to
+        );
+
+        partials[_cid].active = false;
     }
 
     // INTERNAL FUNCTIONS
@@ -344,6 +418,34 @@ contract Marketplace is
         orders[_orderId].ended = true;
     }
 
+    function _partialSwap(
+        string memory _cid,
+        address _assetAddress,
+        uint256 _tokenIdOrAmount,
+        TokenType _type,
+        bytes32[] memory _proof
+    ) internal {
+        require(partials[_cid].active == false, "The order is already active");
+        require(
+            _eligibleToPartialSwap(
+                _cid,
+                _assetAddress,
+                _tokenIdOrAmount,
+                _proof
+            ) == true,
+            "The caller is not eligible to claim the NFT"
+        );
+
+        // deposit NFT or tokens until the NFT locked in the origin chain is being transfered to the buyer
+        _take(_assetAddress, _tokenIdOrAmount, _type, address(this));
+
+        partials[_cid].active = true;
+        partials[_cid].buyer = msg.sender;
+        partials[_cid].assetAddress = _assetAddress;
+        partials[_cid].tokenIdOrAmount = _tokenIdOrAmount;
+        partials[_cid].tokenType = _type;
+    }
+
     function _swap(
         string memory _orderId,
         address _assetAddress,
@@ -371,6 +473,41 @@ contract Marketplace is
         orders[_orderId].ended = true;
     }
     
+    function _claim(
+        string memory _orderId,
+        bool _isOriginChain,
+        bytes32[] memory _proof
+    ) internal {
+        require(
+            _eligibleToClaim(_orderId, msg.sender, _isOriginChain, _proof) ==
+                true,
+            "The caller is not eligible to claim the NFT"
+        );
+
+        // giving NFT
+        if (_isOriginChain == true) {
+            _give(
+                orders[_orderId].owner,
+                orders[_orderId].assetAddress,
+                orders[_orderId].tokenId,
+                orders[_orderId].tokenType,
+                msg.sender
+            );
+
+            orders[_orderId].ended = true;
+        } else {
+            _give(
+                address(this),
+                partials[_orderId].assetAddress,
+                partials[_orderId].tokenIdOrAmount,
+                partials[_orderId].tokenType,
+                msg.sender
+            );
+
+            partials[_orderId].ended = true;
+        }
+    }
+
     function _take(
         address _assetAddress,
         uint256 _tokenIdOrAmount,
