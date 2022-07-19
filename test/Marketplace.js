@@ -1,167 +1,394 @@
-const { expect } = require("chai")
-const { ethers } = require("hardhat")
-const { MerkleTree } = require('merkletreejs')
-const keccak256 = require("keccak256")
-const Hash = require('pure-ipfs-only-hash')
-const { toUsdc, fromUsdc } = require("./Helpers")
+const { expect } = require("chai");
+const { ethers } = require("hardhat");
+const { MerkleTree } = require("merkletreejs");
+const keccak256 = require("keccak256");
+const Hash = require("pure-ipfs-only-hash");
+const { toUsdc, fromUsdc } = require("./Helpers");
 
 // contracts
-let marketplace
+let marketplace;
 
 // mocks
-let erc1155
-let erc721
-let mockUsdc
+let erc1155;
+let erc721;
+let mockUsdc;
 
 // accounts
-let admin
-let alice
-let bob
-let relayer
-let validator
-let dev
-
+let admin;
+let alice;
+let bob;
+let relayer;
+let validator;
+let dev;
 
 describe("Marketplace contract", () => {
+  beforeEach(async () => {
+    [admin, alice, bob, relayer, validator, dev] = await ethers.getSigners();
 
-    beforeEach(async () => {
-        [admin, alice, bob, relayer, validator, dev] = await ethers.getSigners()
+    const Marketplace = await ethers.getContractFactory("Marketplace");
 
-        const Marketplace = await ethers.getContractFactory("Marketplace")
+    const MockERC1155 = await ethers.getContractFactory("MockERC1155");
+    const MockERC721 = await ethers.getContractFactory("MockERC721");
+    const MockERC20 = await ethers.getContractFactory("MockERC20");
 
-        const MockERC1155 = await ethers.getContractFactory("MockERC1155")
-        const MockERC721 = await ethers.getContractFactory("MockERC721")
-        const MockERC20 = await ethers.getContractFactory("MockERC20")
-       
-        marketplace = await Marketplace.deploy(1)
+    marketplace = await Marketplace.deploy(1);
 
-        erc1155 = await MockERC1155.deploy(
-            "https://api.cryptokitties.co/kitties/{id}"
+    erc1155 = await MockERC1155.deploy(
+      "https://api.cryptokitties.co/kitties/{id}"
+    );
+    erc721 = await MockERC721.deploy("Mock NFT", "MOCK");
+    mockUsdc = await MockERC20.deploy("Mock USDC", "USDC", 6);
+  });
+
+  it("create an order and fulfill", async () => {
+    // mint ERC-1155
+    await erc1155.mint(alice.address, 1, 1, "0x00");
+    await erc1155.mint(bob.address, 2, 1, "0x00");
+    // mint ERC-721
+    await erc721.mint(alice.address, 1);
+    await erc721.mint(bob.address, 2);
+
+    // make approvals
+    await erc1155.connect(alice).setApprovalForAll(marketplace.address, true);
+    await erc721.connect(alice).setApprovalForAll(marketplace.address, true);
+    await erc1155.connect(bob).setApprovalForAll(marketplace.address, true);
+    await erc721.connect(bob).setApprovalForAll(marketplace.address, true);
+
+    const CIDS = await Promise.all(
+      ["Order#1", "Order#2"].map((item) => Hash.of(item))
+    );
+
+    // Alice accepts NFT ID 2 from both ERC721 & ERC1155 contracts
+    const leaves = [erc1155, erc721].map((item, index) =>
+      ethers.utils.keccak256(
+        ethers.utils.solidityPack(
+          ["string", "uint256", "address", "uint256"],
+          [index === 0 ? CIDS[0] : CIDS[1], 1, item.address, 2]
         )
-        erc721 = await MockERC721.deploy("Mock NFT", "MOCK")
-        mockUsdc = await MockERC20.deploy("Mock USDC", "USDC", 6)
-    })
+      )
+    );
+    const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
 
-    it("create an order and fulfill", async () => {
+    const hexRoot = tree.getHexRoot();
 
-        // mint ERC-1155
-        await erc1155.mint(alice.address, 1, 1, "0x00")
-        await erc1155.mint(bob.address, 2, 1, "0x00")
-        // mint ERC-721
-        await erc721.mint(alice.address, 1)
-        await erc721.mint(bob.address, 2)
+    await marketplace
+      .connect(alice)
+      .create(CIDS[0], erc1155.address, 1, 2, hexRoot);
+    await marketplace
+      .connect(alice)
+      .create(CIDS[1], erc721.address, 1, 1, hexRoot);
 
-        // make approvals
-        await erc1155.connect(alice).setApprovalForAll(marketplace.address, true)
-        await erc721.connect(alice).setApprovalForAll(marketplace.address, true)
-        await erc1155.connect(bob).setApprovalForAll(marketplace.address, true)
-        await erc721.connect(bob).setApprovalForAll(marketplace.address, true)
+    // verify
+    const firstOrder = await marketplace.orders(CIDS[0]);
+    expect(firstOrder["assetAddress"]).to.equal(erc1155.address);
+    expect(firstOrder["tokenId"].toString()).to.equal("1");
+    expect(firstOrder["tokenType"]).to.equal(2);
+    expect(firstOrder["owner"]).to.equal(alice.address);
 
-        const CIDS = await Promise.all(["Order#1", "Order#2"].map(item =>  Hash.of(item)))
+    const secondOrder = await marketplace.orders(CIDS[1]);
+    expect(secondOrder["assetAddress"]).to.equal(erc721.address);
+    expect(secondOrder["tokenId"].toString()).to.equal("1");
+    expect(secondOrder["tokenType"]).to.equal(1);
+    expect(secondOrder["owner"]).to.equal(alice.address);
 
-        // Alice accepts NFT ID 2 from both ERC721 & ERC1155 contracts
-        const leaves = [erc1155, erc721].map((item, index) => ethers.utils.keccak256(ethers.utils.solidityPack([ "string" , "uint256" , "address", "uint256"], [index === 0 ? CIDS[0] : CIDS[1]  , 1, item.address, 2])))
-        const tree = new MerkleTree(leaves, keccak256, { sortPairs: true })
+    // check whether Bob can swaps
+    const proof1 = tree.getHexProof(
+      ethers.utils.keccak256(
+        ethers.utils.solidityPack(
+          ["string", "uint256", "address", "uint256"],
+          [CIDS[0], 1, erc1155.address, 2]
+        )
+      )
+    );
 
-        const hexRoot = tree.getHexRoot()
+    expect(
+      await marketplace
+        .connect(bob)
+        .eligibleToSwap(CIDS[0], erc1155.address, 2, firstOrder["root"], proof1)
+    ).to.true;
 
-        await marketplace.connect(alice).create(CIDS[0], erc1155.address, 1, 2, hexRoot)
-        await marketplace.connect(alice).create(CIDS[1], erc721.address, 1, 1, hexRoot)
+    const proof2 = tree.getHexProof(
+      ethers.utils.keccak256(
+        ethers.utils.solidityPack(
+          ["string", "uint256", "address", "uint256"],
+          [CIDS[1], 1, erc721.address, 2]
+        )
+      )
+    );
 
-        // verify
-        const firstOrder = await marketplace.orders(CIDS[0])
-        expect(firstOrder['assetAddress']).to.equal(erc1155.address)
-        expect(firstOrder['tokenId'].toString()).to.equal("1")
-        expect(firstOrder['tokenType']).to.equal(2)
-        expect(firstOrder['owner']).to.equal(alice.address)
+    expect(
+      await marketplace
+        .connect(bob)
+        .eligibleToSwap(CIDS[1], erc721.address, 2, secondOrder["root"], proof2)
+    ).to.true;
 
-        const secondOrder = await marketplace.orders(CIDS[1])
-        expect(secondOrder['assetAddress']).to.equal(erc721.address)
-        expect(secondOrder['tokenId'].toString()).to.equal("1")
-        expect(secondOrder['tokenType']).to.equal(1)
-        expect(secondOrder['owner']).to.equal(alice.address)
+    // swap
+    // Token 2 -> Token 1
+    await marketplace.connect(bob).swap(CIDS[0], erc1155.address, 2, 2, proof1);
+    await marketplace.connect(bob).swap(CIDS[1], erc721.address, 2, 1, proof2);
 
-        // check whether Bob can swaps
-        const proof1 = tree.getHexProof(ethers.utils.keccak256(ethers.utils.solidityPack(["string","uint256", "address", "uint256"], [ CIDS[0], 1,  erc1155.address, 2])))
+    // Alice should receives Token 2
+    expect(await erc1155.balanceOf(alice.address, 2)).to.equal(1);
+    expect(await erc721.ownerOf(2)).to.equal(alice.address);
+    // Bob should receives Token 1
+    expect(await erc1155.balanceOf(bob.address, 1)).to.equal(1);
+    expect(await erc721.ownerOf(1)).to.equal(bob.address);
+  });
 
-        expect(await marketplace.connect(bob).eligibleToSwap(
-            CIDS[0],
-            erc1155.address,
-            2,
-            firstOrder['root'],
-            proof1
-        )).to.true
+  it("create an order and fulfill /w ERC-20", async () => {
+    // mint ERC-721 for Alice
+    await erc721.mint(alice.address, 1);
+    // Prepare ERC-20 for Bob
+    await mockUsdc.connect(bob).faucet();
 
-        const proof2 = tree.getHexProof(ethers.utils.keccak256(ethers.utils.solidityPack([ "string", "uint256",  "address", "uint256"], [ CIDS[1], 1,  erc721.address, 2])))
+    // make approvals
+    await erc721.connect(alice).setApprovalForAll(marketplace.address, true);
+    await mockUsdc
+      .connect(bob)
+      .approve(marketplace.address, ethers.constants.MaxUint256);
 
-        expect(await marketplace.connect(bob).eligibleToSwap(
-            CIDS[1],
-            erc721.address,
-            2,
-            secondOrder['root'],
-            proof2
-        )).to.true
+    const cid = await Hash.of("Order#1");
 
-        // swap
-        // Token 2 -> Token 1
-        await marketplace.connect(bob).swap(CIDS[0], erc1155.address, 2, 2, proof1)
-        await marketplace.connect(bob).swap(CIDS[1], erc721.address, 2, 1, proof2)
+    const leaves = [
+      ethers.utils.keccak256(
+        ethers.utils.solidityPack(
+          ["string", "uint256", "address", "uint256"],
+          [cid, 1, mockUsdc.address, toUsdc(200)]
+        )
+      ),
+    ];
 
-        // Alice should receives Token 2
-        expect(await erc1155.balanceOf(alice.address, 2)).to.equal(1)
-        expect(await erc721.ownerOf(2)).to.equal(alice.address)
-        // Bob should receives Token 1
-        expect(await erc1155.balanceOf(bob.address, 1)).to.equal(1)
-        expect(await erc721.ownerOf(1)).to.equal(bob.address)
-    })
+    const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
 
-    it("create an order and fulfill /w ERC-20", async () => {
+    const root = tree.getHexRoot();
 
-        // mint ERC-721 for Alice
-        await erc721.mint(alice.address, 1)
-        // Prepare ERC-20 for Bob
-        await mockUsdc.connect(bob).faucet()
+    // create an order and deposit ERC721 NFT
+    await marketplace.connect(alice).create(cid, erc721.address, 1, 1, root);
 
-        // make approvals
-        await erc721.connect(alice).setApprovalForAll(marketplace.address, true)
-        await mockUsdc.connect(bob).approve(marketplace.address, ethers.constants.MaxUint256)
- 
-        const cid = await Hash.of("Order#1")
+    const proof = tree.getHexProof(
+      ethers.utils.keccak256(
+        ethers.utils.solidityPack(
+          ["string", "uint256", "address", "uint256"],
+          [cid, 1, mockUsdc.address, toUsdc(200)]
+        )
+      )
+    );
 
-        const leaves = [ethers.utils.keccak256(ethers.utils.solidityPack(["string", "uint256", "address", "uint256"], [ cid ,1 , mockUsdc.address, toUsdc(200)]))]
+    expect(
+      await marketplace
+        .connect(bob)
+        .eligibleToSwap(
+          cid,
+          mockUsdc.address,
+          toUsdc(200),
+          (
+            await marketplace.orders(cid)
+          )["root"],
+          proof
+        )
+    ).to.true;
 
-        const tree = new MerkleTree(leaves, keccak256, { sortPairs: true })
+    const before = await mockUsdc.balanceOf(bob.address);
 
-        const root = tree.getHexRoot()
+    // swap 200 USDC for 1 NFT
+    await marketplace
+      .connect(bob)
+      .swap(cid, mockUsdc.address, toUsdc(200), 0, proof);
 
-        // create an order and deposit ERC721 NFT
-        await marketplace.connect(alice).create(cid, erc721.address, 1, 1, root)
+    const after = await mockUsdc.balanceOf(bob.address);
 
-        const proof = tree.getHexProof(ethers.utils.keccak256(ethers.utils.solidityPack(["string", "uint256","address", "uint256"], [cid , 1 , mockUsdc.address, toUsdc(200)])))
+    expect(Number(fromUsdc(before)) - Number(fromUsdc(after))).to.equal(200);
 
-        expect(await marketplace.connect(bob).eligibleToSwap(
-            cid,
-            mockUsdc.address,
-            toUsdc(200),
-            (await marketplace.orders(cid))['root'],
-            proof
-        )).to.true
+    // validate the result
+    expect(await erc721.ownerOf(1)).to.equal(bob.address);
+    expect(await mockUsdc.balanceOf(alice.address)).to.equal(toUsdc(200));
+  });
 
-        const before = await mockUsdc.balanceOf(bob.address)
+  it("Alice creates orders and fulfill", async () => {
+    // mint ERC-1155
+    await erc1155.mint(alice.address, 1, 1, "0x00");
+    await erc1155.mint(bob.address, 2, 1, "0x00");
+    // await erc1155.mintBatch(alice.address, [1, 1, 1], [1, 1, 1], "0x00");
+    // mint ERC-721
+    await erc721.mint(alice.address, 1);
+    await erc721.mint(bob.address, 2);
 
-        // swap 200 USDC for 1 NFT
-        await marketplace.connect(bob).swap(cid, mockUsdc.address, toUsdc(200), 0, proof)
+    // make approvals
+    await erc1155.connect(alice).setApprovalForAll(marketplace.address, true);
+    await erc721.connect(alice).setApprovalForAll(marketplace.address, true);
+    await erc1155.connect(bob).setApprovalForAll(marketplace.address, true);
+    await erc721.connect(bob).setApprovalForAll(marketplace.address, true);
 
-        const after = await mockUsdc.balanceOf(bob.address)
+    const CIDS = await Promise.all(
+      ["Order#1", "Order#2"].map((item) => Hash.of(item))
+    );
 
-        expect(Number(fromUsdc(before)) - Number(fromUsdc(after))).to.equal(200)
+    // Alice accepts NFT ID 2 from both ERC721 & ERC1155 contracts
+    const leaves = [erc1155, erc721].map((item, index) =>
+      ethers.utils.keccak256(
+        ethers.utils.solidityPack(
+          ["string", "uint256", "address", "uint256"],
+          [index === 0 ? CIDS[0] : CIDS[1], 1, item.address, 2]
+        )
+      )
+    );
+    const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
 
-        // validate the result
-        expect(await erc721.ownerOf(1)).to.equal(bob.address)
-        expect(await mockUsdc.balanceOf(alice.address)).to.equal(toUsdc(200))
+    const hexRoot = tree.getHexRoot();
 
-    })
+    // await marketplace
+    //   .connect(alice)
+    //   .create(CIDS[0], erc1155.address, 1, 2, hexRoot);
+    // await marketplace
+    //   .connect(alice)
+    //   .create(CIDS[1], erc721.address, 1, 1, hexRoot);
 
-})
+    await marketplace
+      .connect(alice)
+      .createBatch(
+        [CIDS[0], CIDS[1]],
+        [erc1155.address, erc721.address],
+        [1, 1],
+        [2, 1],
+        [hexRoot, hexRoot]
+      );
+
+    // verify
+    const firstOrder = await marketplace.orders(CIDS[0]);
+    expect(firstOrder["assetAddress"]).to.equal(erc1155.address);
+    expect(firstOrder["tokenId"].toString()).to.equal("1");
+    expect(firstOrder["tokenType"]).to.equal(2);
+    expect(firstOrder["owner"]).to.equal(alice.address);
+
+    const secondOrder = await marketplace.orders(CIDS[1]);
+    expect(secondOrder["assetAddress"]).to.equal(erc721.address);
+    expect(secondOrder["tokenId"].toString()).to.equal("1");
+    expect(secondOrder["tokenType"]).to.equal(1);
+    expect(secondOrder["owner"]).to.equal(alice.address);
+
+    // check whether Bob can swaps
+    const proof1 = tree.getHexProof(
+      ethers.utils.keccak256(
+        ethers.utils.solidityPack(
+          ["string", "uint256", "address", "uint256"],
+          [CIDS[0], 1, erc1155.address, 2]
+        )
+      )
+    );
+
+    expect(
+      await marketplace
+        .connect(bob)
+        .eligibleToSwap(CIDS[0], erc1155.address, 2, firstOrder["root"], proof1)
+    ).to.true;
+
+    const proof2 = tree.getHexProof(
+      ethers.utils.keccak256(
+        ethers.utils.solidityPack(
+          ["string", "uint256", "address", "uint256"],
+          [CIDS[1], 1, erc721.address, 2]
+        )
+      )
+    );
+
+    expect(
+      await marketplace
+        .connect(bob)
+        .eligibleToSwap(CIDS[1], erc721.address, 2, secondOrder["root"], proof2)
+    ).to.true;
+
+    // swap
+    // Token 2 -> Token 1
+    // await marketplace.connect(bob).swap(CIDS[0], erc1155.address, 2, 2, proof1);
+    // await marketplace.connect(bob).swap(CIDS[1], erc721.address, 2, 1, proof2);
+
+    await marketplace
+      .connect(bob)
+      .swapBatch(
+        [CIDS[0], CIDS[1]],
+        [erc1155.address, erc721.address],
+        [2, 2],
+        [2, 1],
+        [proof1, proof2]
+      );
+    // Alice should receives Token 2
+    expect(await erc1155.balanceOf(alice.address, 2)).to.equal(1);
+    expect(await erc721.ownerOf(2)).to.equal(alice.address);
+    // Bob should receives Token 1
+    expect(await erc1155.balanceOf(bob.address, 1)).to.equal(1);
+    expect(await erc721.ownerOf(1)).to.equal(bob.address);
+  });
+
+  it("Alice cancel a batch of orders successfully", async () => {
+    // mint ERC-1155
+    await erc1155.mint(alice.address, 1, 1, "0x00");
+    await erc1155.mint(bob.address, 2, 1, "0x00");
+    // await erc1155.mintBatch(alice.address, [1, 1, 1], [1, 1, 1], "0x00");
+    // mint ERC-721
+    await erc721.mint(alice.address, 1);
+    await erc721.mint(bob.address, 2);
+
+    // make approvals
+    await erc1155.connect(alice).setApprovalForAll(marketplace.address, true);
+    await erc721.connect(alice).setApprovalForAll(marketplace.address, true);
+    await erc1155.connect(bob).setApprovalForAll(marketplace.address, true);
+    await erc721.connect(bob).setApprovalForAll(marketplace.address, true);
+
+    const CIDS = await Promise.all(
+      ["Order#1", "Order#2"].map((item) => Hash.of(item))
+    );
+
+    // Alice accepts NFT ID 2 from both ERC721 & ERC1155 contracts
+    const leaves = [erc1155, erc721].map((item, index) =>
+      ethers.utils.keccak256(
+        ethers.utils.solidityPack(
+          ["string", "uint256", "address", "uint256"],
+          [index === 0 ? CIDS[0] : CIDS[1], 1, item.address, 2]
+        )
+      )
+    );
+    const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
+
+    const hexRoot = tree.getHexRoot();
+
+    // await marketplace
+    //   .connect(alice)
+    //   .create(CIDS[0], erc1155.address, 1, 2, hexRoot);
+    // await marketplace
+    //   .connect(alice)
+    //   .create(CIDS[1], erc721.address, 1, 1, hexRoot);
+
+    await marketplace
+      .connect(alice)
+      .createBatch(
+        [CIDS[0], CIDS[1]],
+        [erc1155.address, erc721.address],
+        [1, 1],
+        [2, 1],
+        [hexRoot, hexRoot]
+      );
+
+    // verify
+    const firstOrder = await marketplace.orders(CIDS[0]);
+    expect(firstOrder["assetAddress"]).to.equal(erc1155.address);
+    expect(firstOrder["tokenId"].toString()).to.equal("1");
+    expect(firstOrder["tokenType"]).to.equal(2);
+    expect(firstOrder["owner"]).to.equal(alice.address);
+
+    const secondOrder = await marketplace.orders(CIDS[1]);
+    expect(secondOrder["assetAddress"]).to.equal(erc721.address);
+    expect(secondOrder["tokenId"].toString()).to.equal("1");
+    expect(secondOrder["tokenType"]).to.equal(1);
+    expect(secondOrder["owner"]).to.equal(alice.address);
+
+    const cancelFirstOrder = await marketplace
+      .connect(alice)
+      .cancelBatch([CIDS[0], CIDS[1]]);
+    expect(cancelFirstOrder["assetAddress"]).to.equal(undefined);
+    expect(cancelFirstOrder["tokenId"]).to.equal(undefined);
+    expect(cancelFirstOrder["tokenType"]).to.equal(undefined);
+    expect(cancelFirstOrder["owner"]).to.equal(undefined);
+  });
+});
 
 // TODO: Trade in batch
