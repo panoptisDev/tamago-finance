@@ -19,7 +19,6 @@ contract TAMG721 is ERC721A, ERC721AQueryable, ERC721ABurnable, Ownable {
 
   constructor(
     string memory _initBaseURI,
-    address _preMintAddress,
     string memory _name,
     string memory _symbol,
     uint256 _maxSupply,
@@ -63,7 +62,7 @@ contract TAMG721 is ERC721A, ERC721AQueryable, ERC721ABurnable, Ownable {
         : "";
   }
 
-  function safeMint(address to, uint256 amount) public {
+  function mint(address to, uint256 amount) public {
     require(totalSupply() + amount <= maxSupply, "Over max supply");
     _safeMint(to, amount);
   }
