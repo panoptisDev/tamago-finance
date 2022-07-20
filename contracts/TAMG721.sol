@@ -10,12 +10,20 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 contract TAMG721 is ERC721A, ERC721AQueryable, ERC721ABurnable, Ownable {
   using Strings for uint256;
 
+  address public minter;
+
   string private baseURI;
   string public baseExtension = ".json";
   uint256 public maxSupply;
   uint256 public randomHash;
 
+  event SetMinter(address indexed caller, address indexed minter);
   event SetBaseURI(string OldBaseURI, string NewBaseURI);
+
+  modifier onlyMinter() {
+    require(msg.sender == minter, "You are not a minter");
+    _;
+  }
 
   constructor(
     string memory _initBaseURI,
@@ -28,10 +36,16 @@ contract TAMG721 is ERC721A, ERC721AQueryable, ERC721ABurnable, Ownable {
     randomHash = _randomHash;
 
     setBaseURI(_initBaseURI);
+    setMinter(msg.sender);
   }
 
   function _baseURI() internal view override returns (string memory) {
     return baseURI;
+  }
+
+  function setMinter(address _minter) public onlyOwner {
+    minter = _minter;
+    emit SetMinter(msg.sender, minter);
   }
 
   function setBaseURI(string memory _newBaseURI) public onlyOwner {
