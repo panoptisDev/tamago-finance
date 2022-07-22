@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 import "./lib/EIP712Whitelisting.sol";
 import "./lib/BlockBasedSale.sol";
 
@@ -22,6 +23,7 @@ contract TAMG721 is
 {
   using Address for address;
   using SafeMath for uint256;
+  using Strings for uint256;
 
   enum SaleState {
     NotStarted,
@@ -50,18 +52,22 @@ contract TAMG721 is
   constructor(
     uint256 _privateSalePrice,
     uint256 _publicSalePrice,
+    string memory baseURI,
     string memory name,
     string memory symbol,
     uint256 _maxSupply,
+    uint256 _seed,
     SaleConfig memory privateSale,
     SaleConfig memory publicSale
   ) ERC721(name, symbol) BlockBasedSale(privateSale, publicSale) {
+    _tokenBaseURI = baseURI;
     maxSupply = _maxSupply;
     publicSalePrice = _publicSalePrice;
     privateSalePrice = _privateSalePrice;
+    seed = _seed;
   }
 
-  function mintToken(uint256 amount, bytes calldata signature)
+  function mint(uint256 amount, bytes calldata signature)
     external
     payable
     nonReentrant
@@ -265,7 +271,7 @@ contract TAMG721 is
   {
     require(tokenId < totalSupply() + 1, "Token not exist.");
 
-    return string(abi.encodePacked(_tokenBaseURI, tokenId, ".json"));
+    return string(abi.encodePacked(_tokenBaseURI, tokenId.toString(), ".json"));
   }
 
   function availableReserve() public view returns (uint256) {
