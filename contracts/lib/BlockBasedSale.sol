@@ -27,18 +27,17 @@ contract BlockBasedSale is Ownable {
 
   uint256 public privateSaleCapped = 690;
   uint256 public totalPrivateSaleMinted = 0;
-  uint256 public privateSalePrice;
 
   uint256 public totalPublicMinted = 0;
   uint256 public totalReserveMinted = 0;
   uint256 public maxSupply = 6969;
   uint256 public maxReserve = 169;
 
-  uint256 public publicSalePrice;
-
   struct SaleConfig {
     uint256 beginBlock;
     uint256 endBlock;
+    uint256 nativePrice;
+    uint256 stablePrice;
   }
 
   SaleConfig public privateSale;
@@ -71,14 +70,6 @@ contract BlockBasedSale is Ownable {
     onlyOwner
   {
     publicSale = _publicSale;
-  }
-
-  function setPublicSalePrice(uint256 _price) external onlyOwner {
-    publicSalePrice = _price;
-  }
-
-  function setPrivateSalePrice(uint256 _price) external onlyOwner {
-    privateSalePrice = _price;
   }
 
   function setCloseSale() external onlyOwner {

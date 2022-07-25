@@ -3,6 +3,8 @@ pragma solidity 0.8.10;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/finance/PaymentSplitter.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
@@ -10,20 +12,21 @@ import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
-import "./lib/EIP712Whitelisting.sol";
+import "./lib/Whitelist.sol";
 import "./lib/BlockBasedSale.sol";
 
 contract TAMG721 is
   Ownable,
   ERC721,
   ERC721Enumerable,
-  EIP712Whitelisting,
+  Whitelist,
   BlockBasedSale,
   ReentrancyGuard
 {
   using Address for address;
   using SafeMath for uint256;
   using Strings for uint256;
+  using SafeERC20 for IERC20;
 
   enum SaleState {
     NotStarted,
@@ -50,24 +53,26 @@ contract TAMG721 is
   string public _tokenBaseURI;
 
   constructor(
-    uint256 _privateSalePrice,
-    uint256 _publicSalePrice,
     string memory baseURI,
     string memory name,
     string memory symbol,
     uint256 _maxSupply,
     uint256 _seed,
     SaleConfig memory privateSale,
-    SaleConfig memory publicSale
-  ) ERC721(name, symbol) BlockBasedSale(privateSale, publicSale) {
+    SaleConfig memory publicSale,
+    bytes32 rootHash,
+    bytes32 rootHashToken
+  )
+    ERC721(name, symbol)
+    BlockBasedSale(privateSale, publicSale)
+    Whitelist(rootHash, rootHashToken)
+  {
     _tokenBaseURI = baseURI;
     maxSupply = _maxSupply;
-    publicSalePrice = _publicSalePrice;
-    privateSalePrice = _privateSalePrice;
     seed = _seed;
   }
 
-  function mint(uint256 amount, bytes calldata signature)
+  function mint(uint256 amount, bytes32[] calldata signature)
     external
     payable
     nonReentrant
@@ -90,7 +95,7 @@ contract TAMG721 is
     }
 
     if (getState() == SaleState.PrivateSaleDuring) {
-      require(isEIP712WhiteListed(signature), "Not whitelisted.");
+      require(isWhitelisted(signature), "Not whitelisted.");
       require(amount <= maxPrivateSalePerTx, "Mint exceed transaction limits");
       require(
         totalPrivateSaleMinted.add(amount) <= privateSaleCapped,
@@ -98,6 +103,7 @@ contract TAMG721 is
       );
 
       require(msg.value >= amount.mul(getPriceByMode()), "Insufficient funds.");
+      _setClaimWhitelisted(msg.sender);
     }
 
     if (
@@ -105,6 +111,71 @@ contract TAMG721 is
       getState() == SaleState.PublicSaleDuring
     ) {
       _mintToken(msg.sender, amount);
+      if (getState() == SaleState.PublicSaleDuring) {
+        totalPublicMinted = totalPublicMinted + amount;
+      }
+      if (getState() == SaleState.PrivateSaleDuring) {
+        _privateSaleClaimed[msg.sender] =
+          _privateSaleClaimed[msg.sender] +
+          amount;
+        totalPrivateSaleMinted = totalPrivateSaleMinted + amount;
+      }
+    }
+
+    return true;
+  }
+
+  function mintWithToken(
+    uint256 amount,
+    bytes32[] calldata signature,
+    bytes32[] calldata tokenSignature,
+    address assetAddress,
+    uint256 assetAmount
+  ) external nonReentrant returns (bool) {
+    require(!msg.sender.isContract(), "Contract is not allowed.");
+    require(
+      isTokenWhitelisted(tokenSignature, assetAddress),
+      "Token is not allowed !"
+    );
+    require(
+      getState() == SaleState.PrivateSaleDuring ||
+        getState() == SaleState.PublicSaleDuring,
+      "Sale not available."
+    );
+
+    if (getState() == SaleState.PublicSaleDuring) {
+      require(amount <= maxPublicSalePerTx, "Mint exceed transaction limits.");
+      require(
+        assetAmount >= amount.mul(getStablePriceByMode()),
+        "Insufficient funds."
+      );
+      require(
+        totalSupply().add(amount).add(availableReserve()) <= maxSupply,
+        "Purchase exceed max supply."
+      );
+    }
+
+    if (getState() == SaleState.PrivateSaleDuring) {
+      require(isWhitelisted(signature), "Not whitelisted.");
+      require(amount <= maxPrivateSalePerTx, "Mint exceed transaction limits");
+      require(
+        totalPrivateSaleMinted.add(amount) <= privateSaleCapped,
+        "Purchase exceed private sale capped."
+      );
+
+      require(
+        assetAmount >= amount.mul(getStablePriceByMode()),
+        "Insufficient funds."
+      );
+      _setClaimWhitelisted(msg.sender);
+    }
+
+    if (
+      getState() == SaleState.PrivateSaleDuring ||
+      getState() == SaleState.PublicSaleDuring
+    ) {
+      _mintToken(msg.sender, amount);
+      _takeToken(assetAddress, assetAmount);
       if (getState() == SaleState.PublicSaleDuring) {
         totalPublicMinted = totalPublicMinted + amount;
       }
@@ -304,9 +375,17 @@ contract TAMG721 is
   }
 
   function getPriceByMode() public view returns (uint256) {
-    if (getState() == SaleState.PrivateSaleDuring) return privateSalePrice;
+    if (getState() == SaleState.PrivateSaleDuring)
+      return privateSale.nativePrice;
 
-    return publicSalePrice;
+    return publicSale.nativePrice;
+  }
+
+  function getStablePriceByMode() public view returns (uint256) {
+    if (getState() == SaleState.PrivateSaleDuring)
+      return privateSale.stablePrice;
+
+    return publicSale.stablePrice;
   }
 
   function supportsInterface(bytes4 interfaceId)
@@ -354,5 +433,9 @@ contract TAMG721 is
     uint256 tokenId
   ) internal virtual override(ERC721, ERC721Enumerable) {
     super._beforeTokenTransfer(from, to, tokenId);
+  }
+
+  function _takeToken(address assetAddress, uint256 amount) internal {
+    IERC20(assetAddress).safeTransferFrom(msg.sender, address(this), amount);
   }
 }
