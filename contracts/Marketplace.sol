@@ -12,47 +12,7 @@ import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
-import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
-
-
-contract Eligibility 
-{
-    using Address for address;
-
-    // Chain ID
-    uint256 public chainId;
-    
-    constructor(uint256 _chainId) {
-        chainId = _chainId;
-    }
-
-    // check whether can do intra-chain swaps
-    function eligibleToSwap(
-        string memory _cid,
-        address _assetAddress,
-        uint256 _tokenIdOrAmount,
-        bytes32 _root,
-        bytes32[] memory _proof
-    ) external view returns (bool) {
-        return _eligibleToSwap(_cid, _assetAddress, _tokenIdOrAmount,  _root, _proof);
-    }
-
-    // INTERNAL
-
-    function _eligibleToSwap(
-        string memory _cid,
-        address _assetAddress,
-        uint256 _tokenIdOrAmount,
-        bytes32 _root,
-        bytes32[] memory _proof
-    ) internal view returns (bool) {
-        bytes32 leaf = keccak256(
-            abi.encodePacked( _cid, chainId, _assetAddress, _tokenIdOrAmount)
-        );
-        return MerkleProof.verify(_proof, _root, leaf);
-    }
-
-}
+import "./Eligibility.sol";
 
 /**
  * @title Single-Chain Marketplace
@@ -77,7 +37,8 @@ contract Marketplace is
     enum TokenType {
         ERC20,
         ERC721,
-        ERC1155
+        ERC1155,
+        ETHER
     }
 
     struct Order {
@@ -226,6 +187,19 @@ contract Marketplace is
         emit Swapped(_cid, msg.sender);
     }
 
+    /// @notice buy the NFT from the given order ID with ETH
+    /// @param _cid ID for the order
+    /// @param _proof the proof generated from off-chain
+    function swapWithEth(
+        string memory _cid,
+        bytes32[] memory _proof
+    ) external validateId(_cid) payable whenNotPaused nonReentrant {
+
+        _swapWithEth(_cid, _proof);
+
+        emit Swapped(_cid, msg.sender);
+    }
+
     /// @notice buy the NFT in batch
     /// @param _cids ID for the order
     /// @param _assetAddresses NFT or ERC20 contract address want to swap
@@ -251,6 +225,21 @@ contract Marketplace is
         }
     }
 
+    /// @notice buy the NFT in batch
+    /// @param _cids ID for the order
+    /// @param _proofs the proof generated from off-chain
+    function swapBatchWithEth(
+        string[] calldata _cids,
+        bytes32[][] calldata _proofs
+    ) external validateIds(_cids) whenNotPaused nonReentrant {
+        for (uint256 i = 0; i < _cids.length; i++) {
+            _swapWithEth(
+                _cids[i],
+                _proofs[i]
+            );
+            emit Swapped(_cids[i], msg.sender);
+        }
+    }
 
     // ADMIN
 
@@ -351,6 +340,7 @@ contract Marketplace is
         TokenType _type,
         bytes32[] memory _proof
     ) internal {
+        require(_type != TokenType.ETHER , "ETHER is not support");
         require(
             _eligibleToSwap(_orderId, _assetAddress, _tokenId,  orders[_orderId].root, _proof) == true,
             "The caller is not eligible to claim the NFT"
@@ -358,6 +348,31 @@ contract Marketplace is
 
         // taking NFT
         _take(_assetAddress, _tokenId, _type, orders[_orderId].owner);
+
+        // giving NFT
+        _give(
+            orders[_orderId].owner,
+            orders[_orderId].assetAddress,
+            orders[_orderId].tokenId,
+            orders[_orderId].tokenType,
+            msg.sender
+        );
+
+        orders[_orderId].ended = true;
+    }
+
+    function _swapWithEth(
+        string memory _orderId,
+        bytes32[] memory _proof
+    ) internal {
+        require(
+            _eligibleToSwapWithEth(_orderId,   orders[_orderId].root, _proof) == true,
+            "The caller is not eligible to claim the NFT"
+        );
+
+        // taking ETH
+        (bool sent, ) = orders[_orderId].owner.call{value: msg.value}("");
+        require(sent, "Failed to send Ether");
 
         // giving NFT
         _give(
@@ -391,7 +406,7 @@ contract Marketplace is
                 _to,
                 _tokenIdOrAmount
             );
-        } else {
+        } else if (_type == TokenType.ERC20) {
             // taking swap fees
             if (swapFee != 0) {
                 uint256 fee = (_tokenIdOrAmount * (swapFee)) / (10000);
@@ -446,4 +461,7 @@ contract Marketplace is
             }
         }
     }
+
+    receive() external payable {}
+    fallback() external payable {}
 }
